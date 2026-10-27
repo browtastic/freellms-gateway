@@ -1,0 +1,56 @@
+{
+  "mcpServers": {
+    "freellms-api": {
+      "type": "sse",
+      "url": "https://api.freellms.net/sse"
+    },
+    "freellms-mcp": {
+      "type": "sse",
+      "url": "https://mcp.freellms.net/sse"
+    },
+    "freellms-db": {
+      "type": "sse",
+      "url": "https://db.freellms.net/sse"
+    },
+    "freellms-fs": {
+      "type": "sse",
+      "url": "https://fs.freellms.net/sse"
+    },
+    "freellms-fetch": {
+      "type": "sse",
+      "url": "https://fetch.freellms.net/sse"
+    },
+    "freellms-auth": {
+      "type": "sse",
+      "url": "https://auth.freellms.net/sse"
+    },
+    "freellms-state": {
+      "type": "sse",
+      "url": "https://state.freellms.net/sse"
+    },
+    "freellms-prompts": {
+      "type": "sse",
+      "url": "https://prompts.freellms.net/sse"
+    },
+    "freellms-exec": {
+      "type": "sse",
+      "url": "https://exec.freellms.net/sse"
+    },
+    "freellms-checkpoint": {
+      "type": "sse",
+      "url": "https://checkpoint.freellms.net/sse"
+    },
+    "freellms-shell": {
+      "type": "sse",
+      "url": "https://shell.freellms.net/sse"
+    },
+    "freellms-dev": {
+      "type": "sse",
+      "url": "https://dev.freellms.net/sse"
+    },
+    "freellms-metrics": {
+      "type": "sse",
+      "url": "https://metrics.freellms.net/sse"
+    }
+  }
+}

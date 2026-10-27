@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "freellms-shell": {
+      "type": "sse",
+      "url": "https://shell.freellms.net/sse"
+    }
+  }
+}

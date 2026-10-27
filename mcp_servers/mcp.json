@@ -1,0 +1,40 @@
+{
+  "mcpServers": {
+    "freellms-mcp": {
+      "type": "sse",
+      "url": "https://mcp.freellms.net/sse"
+    },
+    "freellms-db": {
+      "type": "sse",
+      "url": "https://db.freellms.net/sse"
+    },
+    "freellms-fs": {
+      "type": "sse",
+      "url": "https://fs.freellms.net/sse"
+    },
+    "freellms-fetch": {
+      "type": "sse",
+      "url": "https://fetch.freellms.net/sse"
+    },
+    "freellms-auth": {
+      "type": "sse",
+      "url": "https://auth.freellms.net/sse"
+    },
+    "freellms-state": {
+      "type": "sse",
+      "url": "https://state.freellms.net/sse"
+    },
+    "freellms-prompts": {
+      "type": "sse",
+      "url": "https://prompts.freellms.net/sse"
+    },
+    "freellms-exec": {
+      "type": "sse",
+      "url": "https://exec.freellms.net/sse"
+    },
+    "freellms-checkpoint": {
+      "type": "sse",
+      "url": "https://checkpoint.freellms.net/sse"
+    }
+  }
+}

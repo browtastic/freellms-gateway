@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "freellms-metrics": {
+      "type": "sse",
+      "url": "https://metrics.freellms.net/sse"
+    }
+  }
+}
