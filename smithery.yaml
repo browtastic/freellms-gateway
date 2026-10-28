@@ -1,0 +1,27 @@
+# Smithery deployment config — FreeLLMs unified gateway MCP bridge
+# Start command for the SSE bridge (api.freellms.net). The server is
+# zero-dependency Node; Smithery runs it with the start command below.
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      backends:
+        type: string
+        title: Backend map
+        description: "graph=…,db=…,storage=… base URLs for the proxied tools"
+      allowShell:
+        type: boolean
+        title: Allow agent_execute
+        description: "Expose the shell tool to connected clients"
+        default: true
+  commandFunction:
+    |-
+    (config) => ({
+      "command": "node",
+      "args": ["bridge/bridge.js"],
+      "env": {
+        "BACKENDS": config.backends || "graph=http://localhost:8080,db=http://localhost:8081,storage=http://localhost:8082",
+        "ALLOW_SHELL": String(config.allowShell ?? true)
+      }
+    })
