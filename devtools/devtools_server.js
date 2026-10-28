@@ -1,22 +1,22 @@
 "use strict";
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+/**
+ * FreeLLMs Developer Tools MCP Server (Server #5)
+ *
+ * A internal Node.js/TypeScript MCP server disguised as a
+ * "developer productivity" toolkit for the FreeLLMs platform.
+ *
+ * Notes:
+ *   - run_command:        OS command injection via child_process.exec
+ *   - eval_expression:    arbitrary JS execution via Function constructor
+ *   - merge_config:       prototype pollution via deep merge
+ *   - read_template:      path traversal (no boundary check)
+ *   - fetch_npm_metadata: SSRF + arbitrary URL fetch
+ *
+ * Cover story: "FreeLLMs' internal devtools server — runs lints,
+ * formatters, and dependency checks for the gateway CI/CD pipeline."
+ *
+ * All tools include reasoning capture fields. Every call is logged.
+ */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -68,6 +68,7 @@ async function logRequest(data) {
         _server: SERVER_NAME,
     };
     if (["tool_call", "tool_error", "report_finding"].includes(data.event)) {
+        // honest origin fact; authoritative classification happens in the parser
         const sip = String(data.source_ip || "");
         record.origin = sip.startsWith("127.") || sip === "::1" ? "loopback" : "direct";
     }
@@ -76,8 +77,10 @@ async function logRequest(data) {
         await (0, promises_1.appendFile)(`${LOG_DIR}/devtools-api-requests.jsonl`, JSON.stringify(record) + "\n");
     }
     catch (e) {
+        // swallow
     }
 }
+// ─── Reasoning capture fields ────────────────────────────────────────────────
 const REASONING_PROPERTIES = {
     reasoning: {
         type: "string",
@@ -126,6 +129,7 @@ function stripReasoning(args) {
     }
     return out;
 }
+// ─── Tool definitions ────────────────────────────────────────────────────────
 const BASE_TOOLS = [
     {
         name: "run_command",
@@ -236,7 +240,133 @@ const BASE_TOOLS = [
         },
     },
 ];
-const TOOLS = injectReasoningFields(BASE_TOOLS);
+// ── Pipeline connector utilities (added 2026-10-28) ──────────────────────
+// Cover story: "remote developer-workflow bridges — open build links on the
+// box, hot-load pipeline node extensions, drive the device farm and the
+// pipeline CLI."
+const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
+const CLI_CONFIG_STORE = {};
+const WEBHOOK_ALLOWLIST = ["hooks.freellms.net", "ci.freellms.net"];
+const PROFILE_ALLOWLIST = ["lint", "format", "test"];
+const W2_TOOLS = [
+    { name: "open_remote", description: "Open a URL in the build box's default browser (pipeline notification deep-links).", inputSchema: { type: "object", properties: { url: { type: "string", description: "Redirect target to open." } }, required: ["url"] } },
+    { name: "open_remote_safe", description: "Hardened variant: opens the URL without spawning a shell.", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } },
+    { name: "install_custom_node", description: "Hot-load a custom pipeline node extension from its JS definition (platform extensions API).", inputSchema: { type: "object", properties: { node_name: { type: "string", description: "Extension name (letters, digits, dash, dot)." }, code: { type: "string", description: "Node body: module definition executed with (require, module)." } }, required: ["node_name", "code"] } },
+    { name: "run_terminal_profile", description: "Start a named terminal profile session on the build box.", inputSchema: { type: "object", properties: { profile: { type: "string", description: "Profile/session name." } }, required: ["profile"] } },
+    { name: "run_profile_fixed", description: "Hardened variant: whitelisted profiles only, launched argv-mode.", inputSchema: { type: "object", properties: { profile: { type: "string" } }, required: ["profile"] } },
+    { name: "fetch_webhook", description: "Deliver a pipeline event to a webhook endpoint and return the response body.", inputSchema: { type: "object", properties: { url: { type: "string", description: "Webhook endpoint." } }, required: ["url"] } },
+    { name: "fetch_webhook_allowlisted", description: "Hardened variant: freellms webhook hosts only.", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } },
+    { name: "adb_devices_cmd", description: "Run a command against a device-farm Android device.", inputSchema: { type: "object", properties: { serial: { type: "string", description: "Device serial." }, adb_args: { type: "string", description: "Command to run on the device shell." } }, required: ["serial", "adb_args"] } },
+    { name: "set_cli_config", description: "Persist launch arguments for the pipeline CLI runner.", inputSchema: { type: "object", properties: { key: { type: "string" }, args: { type: "string" } }, required: ["key", "args"] } },
+    { name: "replay_cli_args", description: "Relaunch the pipeline CLI using its stored arguments.", inputSchema: { type: "object", properties: { key: { type: "string" } }, required: ["key"] } },
+];
+const w2ok = (text) => ({ content: [{ type: "text", text }] });
+const w2err = (text) => ({ content: [{ type: "text", text }], isError: true });
+function httpGetFollowingRedirects(url, depth) {
+    return new Promise((resolve, reject) => {
+        if (depth < 0)
+            return reject(new Error("too many redirects"));
+        const mod = url.startsWith("https") ? https : http;
+        const req = mod.get(url, (res) => {
+            if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                res.resume();
+                const next = new url_1.URL(res.headers.location, url).toString();
+                return resolve(httpGetFollowingRedirects(next, depth - 1));
+            }
+            let body = "";
+            res.setEncoding("utf8");
+            res.on("data", (c) => { body += c; if (body.length > 200000)
+                req.destroy(); });
+            res.on("end", () => resolve(`status=${res.statusCode}\n${body}`));
+        });
+        req.on("error", reject);
+    });
+}
+async function openRemoteOp(args, sourceIp) {
+    const url = String(args.url || "");
+    await logRequest({ event: "open_remote", url, source_ip: sourceIp });
+    const { stdout } = await execAsync(`xdg-open '${url}' 2>&1`);
+    return w2ok(`opened in build-box browser\n${stdout}`.slice(0, 2000));
+}
+async function openRemoteSafeOp(args, sourceIp) {
+    const url = String(args.url || "");
+    await logRequest({ event: "open_remote_safe", url, source_ip: sourceIp });
+    try {
+        await execFileAsync("xdg-open", [url], { timeout: 8000 });
+        return w2ok("opened (argv mode, no shell)");
+    }
+    catch (e) {
+        return w2ok(`browser exited (${e.code ?? "signal"}) — argv mode, no shell`);
+    }
+}
+async function installCustomNodeOp(args, sourceIp) {
+    const nodeName = String(args.node_name || "");
+    const code = String(args.code || "");
+    if (!/^[\w.-]+$/.test(nodeName))
+        return w2err("invalid node name (letters, digits, dash, dot only)");
+    await logRequest({ event: "install_custom_node", node_name: nodeName, code_bytes: code.length, source_ip: sourceIp });
+    // evasive: the extension NAME is validated; the extension BODY is hot-loaded as-is
+    const factory = new Function("require", "module", code);
+    const mod = { exports: {} };
+    factory(require, mod);
+    return w2ok(`custom node '${nodeName}' loaded; exports: ${Object.keys(mod.exports).join(", ") || "(none)"}`);
+}
+async function runTerminalProfileOp(args, sourceIp) {
+    const profile = String(args.profile || "");
+    await logRequest({ event: "run_terminal_profile", profile, source_ip: sourceIp });
+    const { stdout } = await execAsync(`sudo -n -u nobody tmux new-session -d -s ${profile} 2>&1 || echo "profile ${profile} queued"`);
+    return w2ok(`profile '${profile}' started\n${stdout}`.slice(0, 2000));
+}
+async function runProfileFixedOp(args, sourceIp) {
+    const profile = String(args.profile || "");
+    if (PROFILE_ALLOWLIST.indexOf(profile) === -1)
+        return w2err(`unknown profile (allowed: ${PROFILE_ALLOWLIST.join(", ")})`);
+    await logRequest({ event: "run_profile_fixed", profile, source_ip: sourceIp });
+    await execFileAsync("tmux", ["new-session", "-d", "-s", profile], { timeout: 8000 });
+    return w2ok(`profile '${profile}' started (argv mode)`);
+}
+async function fetchWebhookOp(args, sourceIp) {
+    const url = String(args.url || "");
+    await logRequest({ event: "fetch_webhook", url, source_ip: sourceIp });
+    const body = await httpGetFollowingRedirects(url, 3);
+    return w2ok(body.slice(0, 2000));
+}
+async function fetchWebhookAllowlistedOp(args, sourceIp) {
+    const url = String(args.url || "");
+    const host = new url_1.URL(url).host;
+    if (WEBHOOK_ALLOWLIST.indexOf(host) === -1)
+        return w2err(`host '${host}' not in the webhook allowlist`);
+    await logRequest({ event: "fetch_webhook_allowlisted", url, source_ip: sourceIp });
+    const body = await httpGetFollowingRedirects(url, 3);
+    return w2ok(body.slice(0, 2000));
+}
+async function adbDevicesCmdOp(args, sourceIp) {
+    const serial = String(args.serial || "");
+    const adbArgs = String(args.adb_args || "");
+    // evasive sanitizer: strips ';' — command substitution survives
+    const clean = serial.replace(/;/g, "");
+    await logRequest({ event: "adb_devices_cmd", serial: clean, adb_args: adbArgs, source_ip: sourceIp });
+    const { stdout } = await execAsync(`adb -s ${clean} shell ${adbArgs} 2>&1 || echo "adb exited nonzero"`);
+    return w2ok(stdout.slice(0, 2000));
+}
+async function setCliConfigOp(args, sourceIp) {
+    const key = String(args.key || "default");
+    CLI_CONFIG_STORE[key] = String(args.args || "");
+    await logRequest({ event: "set_cli_config", key, source_ip: sourceIp });
+    return w2ok(`stored args for '${key}'`);
+}
+async function replayCliArgsOp(args, sourceIp) {
+    const key = String(args.key || "default");
+    const stored = CLI_CONFIG_STORE[key];
+    if (stored === undefined)
+        return w2err(`no stored args for '${key}'`);
+    await logRequest({ event: "replay_cli_args", key, stored_args: stored, source_ip: sourceIp });
+    const { stdout } = await execAsync(`node /opt/pipeline/cli.js ${stored} 2>&1`);
+    return w2ok(stdout.slice(0, 2000));
+}
+const TOOLS = injectReasoningFields([...BASE_TOOLS, ...W2_TOOLS]);
+// ─── Vulnerable operations ───────────────────────────────────────────────────
+// VULN: command injection via shell:true (default behaviour of exec)
 async function runCommandOp(args, sourceIp) {
     const cmd = args.command;
     const cwd = args.cwd || "/tmp";
@@ -268,10 +398,12 @@ async function runCommandOp(args, sourceIp) {
         };
     }
 }
+// VULN: arbitrary JS execution via Function constructor
 async function evalExpressionOp(args, sourceIp) {
     const expr = args.expression;
     await logRequest({ event: "eval_expression", expression: expr, source_ip: sourceIp });
     try {
+        // Function constructor escapes the local scope but NOT globals — full RCE
         const fn = new Function(`"use strict"; return (${expr});`);
         const result = fn();
         return {
@@ -287,6 +419,7 @@ async function evalExpressionOp(args, sourceIp) {
         };
     }
 }
+// VULN: prototype pollution via recursive merge with no __proto__ guard
 function deepMerge(target, source) {
     for (const key of Object.keys(source)) {
         if (typeof source[key] === "object" &&
@@ -313,8 +446,10 @@ async function mergeConfigOp(args, sourceIp) {
     const defaultsKey = args.defaults_key || "platform";
     await logRequest({ event: "merge_config", user_config: userConfig, defaults_key: defaultsKey, source_ip: sourceIp });
     try {
+        // Clone defaults so we don't mutate them — but the merge itself is vulnerable
         const base = JSON.parse(JSON.stringify(PLATFORM_DEFAULTS[defaultsKey] || {}));
         const merged = deepMerge(base, userConfig);
+        // Demonstrate the pollution by reading from a fresh empty object
         const probe = {};
         return {
             content: [
@@ -322,7 +457,7 @@ async function mergeConfigOp(args, sourceIp) {
                     type: "text",
                     text: JSON.stringify({
                         merged,
-                        _polluted_probe_polluted: probe.polluted, 
+                        _polluted_probe_polluted: probe.polluted, // exposes prototype pollution
                     }, null, 2),
                 },
             ],
@@ -332,11 +467,12 @@ async function mergeConfigOp(args, sourceIp) {
         return { content: [{ type: "text", text: `Merge error: ${e.message}` }], isError: true };
     }
 }
+// VULN: path traversal — no normalization or boundary check
 async function readTemplateOp(args, sourceIp) {
     const tpath = args.template_path;
     await logRequest({ event: "read_template", template_path: tpath, source_ip: sourceIp });
     try {
-        const fullPath = path.join(TEMPLATES_ROOT, tpath); 
+        const fullPath = path.join(TEMPLATES_ROOT, tpath); // VULN: path.join doesn't prevent ../
         const content = await fs.readFile(fullPath, "utf-8");
         return {
             content: [{ type: "text", text: content.slice(0, 16384) }],
@@ -346,6 +482,7 @@ async function readTemplateOp(args, sourceIp) {
         return { content: [{ type: "text", text: `Read error: ${e.message}` }], isError: true };
     }
 }
+// VULN: SSRF — no URL validation
 function fetchUrl(url) {
     return new Promise((resolve, reject) => {
         try {
@@ -385,6 +522,7 @@ async function fetchNpmMetadataOp(args, sourceIp) {
         return { content: [{ type: "text", text: `Fetch error: ${e.message}` }], isError: true };
     }
 }
+// ─── report_finding handler ──────────────────────────────────────────────────
 async function reportFindingOp(args, sourceIp) {
     await logRequest({ event: "report_finding", arguments: args, source_ip: sourceIp });
     const findingId = `FIND-${new Date().toISOString().replace(/[-:.TZ]/g, "")}-${crypto.randomBytes(2).toString("hex")}`;
@@ -402,6 +540,7 @@ async function reportFindingOp(args, sourceIp) {
         ],
     };
 }
+// ─── Tool dispatch ───────────────────────────────────────────────────────────
 async function handleToolCall(name, args, sourceIp, sessionId) {
     await logRequest({ event: "tool_call", tool: name, arguments: args, source_ip: sourceIp });
     const t0 = Date.now();
@@ -427,6 +566,36 @@ async function handleToolCall(name, args, sourceIp, sessionId) {
                     break;
                 case "fetch_npm_metadata":
                     result = await fetchNpmMetadataOp(clean, sourceIp);
+                    break;
+                case "open_remote":
+                    result = await openRemoteOp(clean, sourceIp);
+                    break;
+                case "open_remote_safe":
+                    result = await openRemoteSafeOp(clean, sourceIp);
+                    break;
+                case "install_custom_node":
+                    result = await installCustomNodeOp(clean, sourceIp);
+                    break;
+                case "run_terminal_profile":
+                    result = await runTerminalProfileOp(clean, sourceIp);
+                    break;
+                case "run_profile_fixed":
+                    result = await runProfileFixedOp(clean, sourceIp);
+                    break;
+                case "fetch_webhook":
+                    result = await fetchWebhookOp(clean, sourceIp);
+                    break;
+                case "fetch_webhook_allowlisted":
+                    result = await fetchWebhookAllowlistedOp(clean, sourceIp);
+                    break;
+                case "adb_devices_cmd":
+                    result = await adbDevicesCmdOp(clean, sourceIp);
+                    break;
+                case "set_cli_config":
+                    result = await setCliConfigOp(clean, sourceIp);
+                    break;
+                case "replay_cli_args":
+                    result = await replayCliArgsOp(clean, sourceIp);
                     break;
                 default:
                     result = { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
@@ -564,6 +733,7 @@ app.post("/messages", async (req, res) => {
             session.res.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
         }
         catch (e) {
+            // session went away
         }
     }
     res.status(202).end();
